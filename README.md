@@ -1,0 +1,2 @@
+# unsupervisedWineAnalysis
+Testing methods for supervised and unsupervised analysis to a new dataset. I’m working with data characterizing the relationship between wine quality and its analytical characteristics available at UCI ML repository. The overall goal will be to use data modeling approaches to understand which wine properties influence the most wine quality as determined by expert evaluation.
