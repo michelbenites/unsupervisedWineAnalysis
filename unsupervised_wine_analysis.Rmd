@@ -1,0 +1,338 @@
+---
+title: "Unsupervised method to analysis wine database"
+output:
+  html_document:
+    toc: true
+---
+
+```{r setup, include=FALSE}
+library(glmnet)
+library(leaps)
+library(ggplot2)
+library(GGally)
+library(MASS)
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+Testing methods for supervised and unsupervised analysis to a new dataset.  I'm working with data characterizing the relationship between wine quality and its analytical characteristics [available at UCI ML repository](https://archive.ics.uci.edu/ml/datasets/Wine+Quality).  The overall goal will be to use data modeling approaches to understand which wine properties influence the most wine quality as determined by expert evaluation.
+
+**White wine Analysis**
+```{r datareadwhitewine, fig.height=6, fig.width=10}
+############# White wine Analysis, read data and compare the results
+winedata.whi <- read.csv("data\\winequality-white.csv", sep = ";", header = T)
+bkp.header   <- names(winedata.whi)
+colnames(winedata.whi) <- c("fa", "va", "ca", "rs", "ch", "fsd", "tsd", "den", "pH", "sul", "alc", "quality")
+
+# Visualize first rows, summary and dimensions
+summary(winedata.whi)
+dim(winedata.whi)
+
+# Cleaning
+winedata.whi <- winedata.whi[!winedata.whi$fsd==289.000 & !winedata.whi$rs==65.800 & !winedata.whi$den==1.0103 & !winedata.whi$ca==1.6600 & !winedata.whi$fa==14.200,]
+
+# Plot pairwise for all observations
+ggpairs(winedata.whi, lower = list(continuous="smooth"))
+
+# Fit the model
+mdl.whi <- lm(quality ~ ., data = winedata.whi)
+
+# Summary and plot the model
+summary(mdl.whi)
+
+# MSE 
+mse.problem1 <- mean((winedata.whi[,"quality"]-predict(mdl.whi))^2)
+old.par <- par(mfrow=c(2,2))
+plot(mdl.whi)
+par(old.par)
+```
+
+**Red wine Analysis**
+```{r datareadredwine, fig.height=6, fig.width=10}
+############# Red wine Analysis, read data and compare the results
+winedata.red <- read.csv("data\\winequality-red.csv", sep = ";", header = T)
+colnames(winedata.red) <- c("fa", "va", "ca", "rs", "ch", "fsd", "tsd", "den", "pH", "sul", "alc", "quality")
+
+# Visualize first rows, summary and dimensions
+summary(winedata.red)
+dim(winedata.red)
+
+winedata.red <- winedata.red[!winedata.red$tsd==289.000 & !winedata.red$ca==1.000 &!winedata.red$ch==0.61100,]
+
+# Plot pairwise for all observations
+ggpairs(winedata.red, lower = list(continuous="smooth"))
+
+# Fit the model
+mdl.red <- lm(quality ~ ., data = winedata.red)
+
+# Summary and plot the model
+summary(mdl.red)
+old.par <- par(mfrow=c(2,2))
+plot(mdl.red)
+par(old.par)
+```
+
+**4898 observations, 11 predictors and 1 outcome for White Wine Dataset.**
+
+**1599 observations, 11 predictors and 1 outcome for Red Wine Dataset.**
+
+**In order to clear the views, the column names have changed. Some higher values were also removed that were causing distortions in some indicators such as residuals vs. leverage. This also improved the coefficients.**
+**The correlation of the predictors with the result is not significant. For the two datasets, the alcohol is the predictor with highest correlation with the outcome. Collinearity was not detected since the predictors do not have a high correlation with each other. A comparison was made to analyze the need to use transformed or untransformed data, the result is that an improvement in MSE, R^2^ and adj. R^2^ was detected for the white wine dataset, however for red wine, the values of R^2^ and R^2^ getting worse using transformed data. Also, no significant improvements were found in the model plot (residuals vs fitted values, normal Q-Q etc.). Concluding that it was not justified to make a transformation in the data. **
+
+## Choose optimal models by exhaustive, forward and backward selection 
+
+**White wine**
+``` {r whitewinedataregsubsets, fig.widht = 10}
+########### White Wine
+summaryMetrics <- NULL
+whichAll <- list()
+regsubsetsAll <- list()
+for ( myMthd in c("exhaustive", "backward", "forward") ) {
+  rsRes <- regsubsets(quality ~ ., winedata.whi, method=myMthd, nvmax=11)
+  regsubsetsAll[[myMthd]] <- rsRes
+  summRes <- summary(rsRes)
+  whichAll[[myMthd]] <- summRes$which
+  for ( metricName in c("rsq","rss","adjr2","cp","bic") ) {
+    summaryMetrics <- rbind(summaryMetrics,
+      data.frame(method=myMthd,metric=metricName,
+                nvars=1:length(summRes[[metricName]]),
+                value=summRes[[metricName]]))
+  }
+}
+
+ggplot(summaryMetrics,aes(x=nvars,y=value,shape=method,colour=method)) + geom_path() + geom_point() + facet_wrap(~metric,scales="free") +   theme(legend.position="top")
+
+old.par <- par(mfrow=c(2,2),ps=12, mar=c(5,7,2,1))
+for ( myMthd in names(whichAll) ) {
+  image(1:nrow(whichAll[[myMthd]]),
+        1:ncol(whichAll[[myMthd]]),
+        whichAll[[myMthd]],xlab="N(vars)",ylab="",
+        xaxt="n",yaxt="n",breaks=c(-0.5,0.5,1.5),
+        col=c("white","gray"),main=myMthd)
+  axis(1,1:nrow(whichAll[[myMthd]]),rownames(whichAll[[myMthd]]))
+  axis(2,1:ncol(whichAll[[myMthd]]),colnames(whichAll[[myMthd]]),las=2)
+}
+par(old.par)
+```
+
+**We see a tendency of the optimal model to stabilize from 6 or more variables.**
+**We also see that the methods included variables of different forms. In the exhaustive method no variables were included in all scenarios. In backward density was used in all models. In forward, alcohol was the most used, appearing in all selections.**
+
+**Red wine**
+``` {r redwinedataregsubsets, fig.widht = 10}
+########### Red Wine
+summaryMetrics <- NULL
+whichAll <- list()
+regsubsetsAll <- list()
+for ( myMthd in c("exhaustive", "backward", "forward") ) {
+  rsRes <- regsubsets(quality ~ ., winedata.red, method=myMthd, nvmax=11)
+  regsubsetsAll[[myMthd]] <- rsRes
+  summRes <- summary(rsRes)
+  whichAll[[myMthd]] <- summRes$which
+  for ( metricName in c("rsq","rss","adjr2","cp","bic") ) {
+    summaryMetrics <- rbind(summaryMetrics,
+      data.frame(method=myMthd,metric=metricName,
+                nvars=1:length(summRes[[metricName]]),
+                value=summRes[[metricName]]))
+  }
+}
+
+ggplot(summaryMetrics,aes(x=nvars,y=value,shape=method,colour=method)) + geom_path() + geom_point() + facet_wrap(~metric,scales="free") +   theme(legend.position="top")
+
+old.par <- par(mfrow=c(2,2),ps=12, mar=c(5,7,2,1))
+for ( myMthd in names(whichAll) ) {
+  image(1:nrow(whichAll[[myMthd]]),
+        1:ncol(whichAll[[myMthd]]),
+        whichAll[[myMthd]],xlab="N(vars)",ylab="",
+        xaxt="n",yaxt="n",breaks=c(-0.5,0.5,1.5),
+        col=c("white","gray"),main=myMthd)
+  axis(1,1:nrow(whichAll[[myMthd]]),rownames(whichAll[[myMthd]]))
+  axis(2,1:ncol(whichAll[[myMthd]]),colnames(whichAll[[myMthd]]),las=2)
+}
+par(old.par)
+```
+
+**In the red wine dataset we detected an improvement in the model from 3 variables, the "bic" metric indicates that more than 7 variables the model is not effective. An interesting point to comment is that the alcohol variable was the most used in all methods.**
+
+Cross-validation to estimate test error for models with different numbers of variables. 
+
+``` {r crossvalidationfunctions}
+# Create predict function
+predict.regsubsets <- function (object, newdata, id, ...){
+  form=as.formula(object$call [[2]])
+  mat=model.matrix(form,newdata)
+  coefi=coef(object,id=id)
+  xvars=names (coefi)
+  mat[,xvars] %*% coefi
+}
+
+# Create bootstrap function 
+bootRegsubsetsWinedata <- function(inpdat, nTries=100) {
+  dfTmp <- NULL
+  whichSum <- array(0,dim=c(ncol(inpdat)-1,ncol(inpdat),3),dimnames=list(NULL,colnames(model.matrix(quality~.,inpdat)),c("exhaustive", "backward", "forward")))
+  for ( iTry in 1:nTries ) {
+    trainIdx <- NULL
+    trainIdx <- sample(nrow(inpdat),nrow(inpdat),replace=TRUE)
+    for ( jSelect in c("exhaustive", "backward", "forward") ) {
+      rsTrain <- regsubsets(quality~.,inpdat[trainIdx,],nvmax=ncol(inpdat)-1,method=jSelect)
+      whichSum[,,jSelect] <- whichSum[,,jSelect] + summary(rsTrain)$which
+      for ( kVarSet in 1:(ncol(inpdat)-1) ) {
+        # "call" in predict.regsubsets doesn't work here:
+        kCoef <- coef(rsTrain,id=kVarSet)
+        testPred <- model.matrix (quality~.,inpdat[-trainIdx,])[,names(kCoef)] %*% kCoef
+        mseTest <- mean((testPred-inpdat[-trainIdx,"quality"])^2)
+        dfTmp <- rbind(dfTmp,data.frame(sim=iTry,sel=jSelect,vars=kVarSet,mse=c(mseTest,summary(rsTrain)$rss[kVarSet]/length(trainIdx)),trainTest=c("test","train")))
+      }
+    }
+  }
+  list(mseAll=dfTmp,whichSum=whichSum,nTries=nTries)
+}
+```
+
+**White Wine**
+``` {r whitewinedatacrossvalidation}
+####### White wine
+winedata.whi.mse <- bootRegsubsetsWinedata(winedata.whi)
+ggplot(winedata.whi.mse$mseAll,aes(x=factor(vars),y=mse,colour=sel)) + geom_boxplot() + facet_wrap(~trainTest)
+
+old.par <- par(mfrow=c(2,2),ps=12, mar=c(5,7,2,1))
+for ( myMthd in dimnames(winedata.whi.mse$whichSum)[[3]] ) {
+  tmpWhich <- winedata.whi.mse$whichSum[,,myMthd] / winedata.whi.mse$nTries
+  image(1:nrow(tmpWhich),1:ncol(tmpWhich),tmpWhich,
+        xlab="N(vars)",ylab="",xaxt="n",yaxt="n",main=myMthd,
+        breaks=c(-0.1,0.1,0.25,0.5,0.75,0.9,1.1),
+        # notice parameterized creation of the gray scale colors:
+        col=gray(seq(1,0,length=6)))
+  axis(1,1:nrow(tmpWhich),rownames(tmpWhich))
+  axis(2,1:ncol(tmpWhich),colnames(tmpWhich),las=2)
+}
+par(old.par)
+```
+
+**Addition of the second variable to the model clearly improves test error by much more than its variability across different selections of training sets**
+
+**The difference in error among models with five variables or more is comparable to their variability across different selections of training data and, therefore, probably not particularly meaningful**
+
+**Training error is slightly lower than the test one**
+
+
+
+**Red Wine**
+``` {r redwinedatacrossvalidation}
+####### Red wine
+winedata.red.mse <- bootRegsubsetsWinedata(winedata.red)
+ggplot(winedata.red.mse$mseAll,aes(x=factor(vars),y=mse,colour=sel)) + geom_boxplot() + facet_wrap(~trainTest)
+
+old.par <- par(mfrow=c(2,2),ps=12, mar=c(5,7,2,1))
+for ( myMthd in dimnames(winedata.red.mse$whichSum)[[3]] ) {
+  tmpWhich <- winedata.red.mse$whichSum[,,myMthd] / winedata.red.mse$nTries
+  image(1:nrow(tmpWhich),1:ncol(tmpWhich),tmpWhich,
+        xlab="N(vars)",ylab="",xaxt="n",yaxt="n",main=myMthd,
+        breaks=c(-0.1,0.1,0.25,0.5,0.75,0.9,1.1),
+        # notice parameterized creation of the gray scale colors:
+        col=gray(seq(1,0,length=6)))
+  axis(1,1:nrow(tmpWhich),rownames(tmpWhich))
+  axis(2,1:ncol(tmpWhich),colnames(tmpWhich),las=2)
+}
+
+par(old.par)
+```
+
+**Addition of the second variable to the model clearly improves test error by much more than its variability across different selections of training sets**
+
+**The difference in error among models with four variables or more is comparable to their variability across different selections of training data and, therefore, probably not particularly meaningful**
+
+**Training error is slightly lower than the test one**
+
+
+Lasso/ridge - Use regularized approaches to model quality of red and white wine.  Comparing the resulting models. 
+
+**White wine Lasso and Ridge Regularizations**
+``` {r whitewinedatalassoridge}
+################ White Wine
+# Lasso regularization
+x <- model.matrix(quality~., winedata.whi)[,-1]
+y <- winedata.whi[,"quality"]
+lassoRes <- glmnet(scale(x),y,alpha=1)
+plot(lassoRes)
+cvLassoRes <- cv.glmnet(scale(x),y,alpha=1)
+plot(cvLassoRes)
+predict(lassoRes,type="coefficients",s=cvLassoRes$lambda.1se)
+predict(lassoRes,type="coefficients",s=cvLassoRes$lambda.min)
+
+# Ridge Regularization
+ridgeRes <- glmnet(scale(x),y,alpha=0)
+plot(ridgeRes)
+cvRidgeRes <- cv.glmnet(scale(x),y,alpha=0)
+plot(cvRidgeRes)
+
+predict(ridgeRes,type="coefficients",s=cvRidgeRes$lambda.min)
+predict(ridgeRes,type="coefficients",s=cvRidgeRes$lambda.1se)
+```
+
+**Using the Lasso regularization criteria it was found that the variables "citric.acid", "total.sulfur.dioxide" and "density" are not significant for the model, "pH" and "chlorides" have a low significance. Regularization Ridge also detected the same variables as significant, except for the "density" variable that had a high significance. Regarding the quantity of variables, there is a similarity with the regsubset and resampling analyzes, since the previous two indicated 8 variables as a stable model. The variable Alcohol that appeared many times in the regsubset methods, was also indicated with very significant in both Lasso and Ridge.**
+
+**Red wine Lasso Regularization**
+``` {r redwinedatalassoridge}
+################ Red Wine
+# Lasso regularization
+x <- model.matrix(quality~., winedata.red)[,-1]
+y <- winedata.red[,"quality"]
+lassoRes <- glmnet(scale(x),y,alpha=1)
+plot(lassoRes)
+cvLassoRes <- cv.glmnet(scale(x),y,alpha=1)
+plot(cvLassoRes)
+predict(lassoRes,type="coefficients",s=cvLassoRes$lambda.1se)
+predict(lassoRes,type="coefficients",s=cvLassoRes$lambda.min)
+
+# Ridge Regularization
+ridgeRes <- glmnet(scale(x),y,alpha=0)
+plot(ridgeRes)
+cvRidgeRes <- cv.glmnet(scale(x),y,alpha=0)
+plot(cvRidgeRes)
+
+predict(ridgeRes,type="coefficients",s=cvRidgeRes$lambda.min)
+predict(ridgeRes,type="coefficients",s=cvRidgeRes$lambda.1se)
+
+```
+**Using the Lasso regularization criteria it was detected that the variables "fixed.acidity", "citric.acid", "residual.sugar", "free.sulfur.dioxide" and "density" are not significant for the model. Ridge regularization also detected the same variables as non-significant. Regarding the quantity of variables, the two regularizations coincide with the regsubset and resampling analyzes, since the previous two indicated 6 variables as a stable model. The variables "volatile.acidity", "sulphates" and "alcohol" were the ones that most appeared in the regsubset methods, and they were indicated as the most significant in both Lasso and Ridge.**
+
+## PCA Analysis
+
+```{r winedataPCA, fig.height=5, fig.width=10}
+# Add column with wine type (red and white)
+tmp.whi       <- winedata.whi
+tmp.whi$type  <- "white"
+tmp.red       <- winedata.red
+tmp.red$type  <- "red"
+
+# Merge two datasets
+winedata.full <- rbind(tmp.whi, tmp.red) 
+
+# Getting pca
+wine.pca      <- prcomp(winedata.full[,1:11], scale = T)
+
+# Cluster relation using kmeans
+km.out <- kmeans(scale(winedata.full[,1:11]), 2, nstart = 50)
+
+# Plot the first two principal component
+old.par <- par(mfrow=c(1,2),ps=12, mar=c(5,7,2,1))
+plot(wine.pca$x[,1:2], col=ifelse(winedata.full$type=="white","black","red"), main="Cluster by Type" )
+plot(wine.pca$x[,1:2], col=km.out$cluster                                   , main="Cluster by Kmeans")
+par(old.par)
+
+biplot(wine.pca)
+
+ggpca         <- as.data.frame(wine.pca$x[,1:2])
+ggpca         <- cbind(ggpca, quality = winedata.full$quality)
+ggpca$quality <- as.factor(ggpca$quality)
+ggpca         <- cbind(ggpca, type=winedata.full$type)
+ggpca$type    <- as.factor(ggpca$type)
+
+ggplot(ggpca, aes(x=PC1, y=PC2, color=quality)) + geom_point() + stat_ellipse(aes(x=PC1, y=PC2,color=type),type = "norm")
+```
+
+**In addition to changing the color of the points in the  to classify the types of wines, I also decided to plot another graph using the k-means algorithm to try to detect the groups. Clearly, two distinct clusters were formed, those of white wine with a PC1 with smaller values and a red wine grouping with higher values for PC1. Regarding quality, we see that the mean values (6 and 7) are concentrated in the central parts of the clusters.**
+
+
